@@ -647,9 +647,9 @@ rather than relying only on resident memory.
 
 Ponarch is an independent project inspired by:
 
--   [Ponarch](https://ponarch.web.id/) --- the original project and design
+-   [Poni](https://poni.web.id/) --- the original project and design
     inspiration.
--   [Ponarch for Windows](https://github.com/liimalim/Ponarch) --- the Windows
+-   [Poni for Windows](https://github.com/liimalim/Poni) --- the Windows
     implementation that helped shape the notch concept.
 
 Ponarch is not affiliated with or endorsed by the original Ponarch project.
