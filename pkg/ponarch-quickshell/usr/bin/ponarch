@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# ponarch — launcher/kontrol untuk Ponarch (notch Quickshell untuk Hyprland)
+set -u
+
+DIR="${PONARCH_DIR:-/usr/share/ponarch}"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/ponarch"
+[ -f "$CONF/ponarch.env" ] && . "$CONF/ponarch.env"
+
+# Waybar yang dipakai saat `ponarch mode` kembali ke bar penuh (bisa diubah di ponarch.env)
+WAYBAR_CONFIG="${PONARCH_WAYBAR_CONFIG:-$HOME/.config/waybar/configs/normal.jsonc}"
+WAYBAR_STYLE="${PONARCH_WAYBAR_STYLE:-$HOME/.config/waybar/style/normal.css}"
+
+QS="$(command -v qs || command -v quickshell || true)"
+[ -n "$QS" ] || { echo "ponarch: quickshell tidak ditemukan" >&2; exit 1; }
+
+running() { pgrep -f -- "-p $DIR" >/dev/null 2>&1; }
+
+start() {
+    mkdir -p "$CONF"
+    OLD_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/poni"
+    if [ ! -e "$CONF/settings.json" ] && [ -f "$OLD_CONF/settings.json" ]; then
+        cp "$OLD_CONF/settings.json" "$CONF/settings.json"
+    fi
+    # hemat RAM: batasi arena malloc glibc dan kembalikan memori bebas lebih cepat
+    export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}" MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-65536}"
+    # Glass membutuhkan blur compositor pada layer Ponarch; pasang aturan runtime
+    # agar tidak bergantung pada apakah file contoh sudah di-include Hyprland.
+    if command -v hyprctl >/dev/null 2>&1; then
+        hyprctl keyword layerrule "blur on, match:namespace ponarch" >/dev/null 2>&1 || true
+        hyprctl keyword layerrule "ignore_alpha 0.1, match:namespace ponarch" >/dev/null 2>&1 || true
+    fi
+    # opsional (eksperimental): PONARCH_SOFTWARE=1 di ponarch.env -> render software, tanpa konteks GPU
+    [ "${PONARCH_SOFTWARE:-0}" = 1 ] && export QT_QUICK_BACKEND=software
+    "$QS" -p "$DIR" -n -d >/dev/null 2>&1 || true
+}
+stop()  { "$QS" kill -p "$DIR" >/dev/null 2>&1 || true; }
+ipc()   { "$QS" -p "$DIR" ipc call ponarch "$@"; }
+
+start_waybar() {
+    if [ ! -f "$WAYBAR_CONFIG" ] || [ ! -f "$WAYBAR_STYLE" ]; then
+        notify-send -a Ponarch "Waybar" "Config/style tidak ketemu. Atur PONARCH_WAYBAR_CONFIG dan PONARCH_WAYBAR_STYLE di $CONF/ponarch.env" 2>/dev/null
+        return 1
+    fi
+    pkill -x waybar 2>/dev/null; sleep 0.2
+    setsid waybar -c "$WAYBAR_CONFIG" -s "$WAYBAR_STYLE" >/tmp/ponarch-waybar.log 2>&1 &
+}
+
+localsend() {
+    if pgrep -x localsend_app >/dev/null || pgrep -x localsend >/dev/null; then
+        pkill -x localsend_app; pkill -x localsend
+    elif command -v localsend_app >/dev/null; then
+        setsid localsend_app >/dev/null 2>&1 &
+    elif command -v localsend >/dev/null; then
+        setsid localsend >/dev/null 2>&1 &
+    elif command -v flatpak >/dev/null && flatpak info org.localsend.localsend_app >/dev/null 2>&1; then
+        setsid flatpak run org.localsend.localsend_app >/dev/null 2>&1 &
+    else
+        notify-send -a Ponarch "LocalSend" "LocalSend belum terpasang" 2>/dev/null
+        return 1
+    fi
+}
+
+case "${1:-help}" in
+    start)  start ;;
+    stop)   stop ;;
+    restart) stop; sleep 0.3; start ;;
+    # buka/tutup notch (pin). Jalankan Ponarch dulu kalau belum hidup.
+    notch|toggle)
+        running || { start; sleep 0.6; }
+        ipc toggle ;;
+    show)   running || { start; sleep 0.6; }; ipc show ;;
+    hide)   ipc hide ;;
+    # sembunyikan / tampilkan seluruh Ponarch
+    vis)    running || { start; sleep 0.6; }; ipc vis ;;
+    tab)    running || { start; sleep 0.6; }; ipc tab "${2:-home}" ;;
+    # ganti antara Waybar penuh <-> Ponarch (compact)
+    mode)
+        if running; then
+            stop; start_waybar
+        else
+            pkill -x waybar 2>/dev/null; sleep 0.2; start
+        fi ;;
+    localsend) localsend ;;
+    # login Google Calendar sekali (tambah acara + sinkron HP)
+    gcal)   exec python3 "$DIR/gcal.py" auth ;;
+    edit)   mkdir -p "$CONF"; xdg-open "$CONF/settings.json" ;;
+    mem)
+        p=$(pgrep -f -- "-p $DIR" | head -1)
+        [ -n "$p" ] || { echo "ponarch: stopped"; exit 1; }
+        awk '/^(Rss|Pss|Pss_Anon|Pss_File|Private_Dirty):/{printf "%-14s %6.0f MB\n",$1,$2/1024}' "/proc/$p/smaps_rollup"
+        echo "(Pss = pemakaian sebenarnya; Rss menghitung library bersama)" ;;
+    status) if running; then echo "ponarch: running"; else echo "ponarch: stopped"; fi ;;
+    *)
+        cat <<EOF
+ponarch — notch Quickshell untuk Hyprland
+
+  ponarch start|stop|restart   jalankan / hentikan Ponarch
+  ponarch notch                buka/tutup notch (pin)
+  ponarch tab <nama>           buka tab: home dash control net todo notes pomo weather prayer health day cal ai trans shelf notif gh screen system buddy tray settings
+  ponarch mode                 ganti Waybar penuh <-> Ponarch (cocok untuk Super+Shift+J)
+  ponarch localsend            buka/tutup LocalSend
+  ponarch gcal                 login Google Calendar (sekali) untuk tambah acara
+  ponarch edit                 buka ~/.config/ponarch/settings.json
+  ponarch vis                  sembunyikan / tampilkan Ponarch sepenuhnya
+  ponarch status
+  ponarch mem                  pemakaian RAM Ponarch (Pss = angka sebenarnya)
+
+Pengaturan: ~/.config/ponarch/settings.json (atau tab ⚙ di notch)
+EOF
+        ;;
+esac

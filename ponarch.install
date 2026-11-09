@@ -1,0 +1,8 @@
+post_install() {
+    echo ":: Ponarch terpasang. Tambahkan keybind dari /usr/share/doc/ponarch/hypr-ponarch.conf ke hyprland.conf,"
+    echo "   lalu jalankan:  ponarch start    (atau  ponarch mode  untuk ganti dari Waybar)"
+}
+
+post_upgrade() {
+    echo ":: Ponarch diperbarui. Muat ulang dengan:  ponarch restart"
+}
